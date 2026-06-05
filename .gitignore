@@ -1,0 +1,27 @@
+# Python virtual environment
+venv/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# macOS files
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Python environment and packaging
+.env
+.venv
+env/
+ENV/
+
+# Visual Studio Code
+.vscode/
+
+# Logs
+*.log
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
