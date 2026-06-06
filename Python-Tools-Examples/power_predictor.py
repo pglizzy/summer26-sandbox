@@ -3,14 +3,25 @@ import os
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# GLOBAL VARIABLES:
-R_AIR = 287     # (J/kg*K) Gas Constant
+# CSV IMPORT PATHS:
+path_dyno_csv = "N/A"
+path_rotating_assy_csv = "N/A"
+path_fuel_csv = "N/A"
+
+# GLOBAL CONSTANTS:
+R_AIR = 287         # (J/kg*K) Gas Constant
 GAMMA_AIR = 1.4     # Ratio of Constant Heats for Air
+T_0 = 300           # (K) Ambient Air Temperature
+P_0 = 101325        # (Pa) Ambient Air Pressure (Atmospheric Pressure, absolute)
+k = 10              # Plenum volume to engine displacement ratio. 
 
 # GLOBAL FUNCTIONS
 PI = np.pi
 COS = np.cos
 SIN = np.sin
+
+# GLOBAL ARRAYS:
+CRANK_ANGLE_ARRAY_RADIANS = np.linspace(0, 4*PI, 1001) # Crank angle array from 0 to 720 degrees (4*pi radians) with 1001 points
 
 # -----------------------------------------
 #           RESTRICTOR FUNCTIONS
@@ -72,6 +83,20 @@ def restrictor_mass_flowrate(diam, T_0, p_0, p_plenum, Cd=1):
 # -----------------------------------------
 #           ENGINE FUNCTIONS
 # -----------------------------------------
+
+def convert_rpm_to_angularspeed_4stroke(rpm):
+    """
+    Converts engine speed in RPM to angular speed in radians per second for a 4-stroke engine.
+
+    INPUT:
+    - rpm : engine speed in revolutions per minute
+
+    OUTPUT:
+    - omega (rad/s) : angular speed of the crankshaft
+    """
+    return (rpm * 2 * PI) / 60 / 2   # Divide by 2 for 4-stroke engine
+
+
 
 def update_plenum_pressure(restrictordiam, Cd, crankangle, bore, stroke, lconrod, rpm, p_0=101325, T_0=300):
     """
