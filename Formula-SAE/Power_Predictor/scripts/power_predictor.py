@@ -1,12 +1,30 @@
 import numpy as np
-import os
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# CSV IMPORT PATHS:
-path_dyno_csv = "N/A"
-path_rotating_assy_csv = "N/A"
-path_fuel_csv = "N/A"
+from pathlib import Path
+import sys
+
+# Get the Project Root: Power_Predictor/
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+# Add root to Python Path
+sys.path.append(str(PROJECT_ROOT))
+
+# Get custom functions
+from source import restrictor_mass_flowrate
+from source import piston_velocity_m_s
+
+# Get data files
+from source.data_loader import (
+    load_dyno_curves,
+    load_fuels,
+    load_engine_specs
+)
+
+engine_specs = load_engine_specs()
+fuels = load_fuels()
+dyno_curves = load_dyno_curves()
 
 # GLOBAL CONSTANTS:
 R_AIR = 287         # (J/kg*K) Gas Constant
@@ -27,63 +45,6 @@ dN = 50             # (RPM) Engine speed step size
 # CRANK ANGLE ARRAY:
 ANGLE_STEPS = int(4 * np.pi / dTHETA) + 1
 CRANK_ANGLE_ARRAY_RADIANS = np.linspace(0, 4*np.pi, ANGLE_STEPS) 
-
-# -----------------------------------------
-#           RESTRICTOR FUNCTIONS
-# -----------------------------------------
-
-def restrictor_mass_flowrate(diam, T_0, p_0, p_plenum, Cd=1):
-    """
-    Calculate the mass flowrate of the air through the restrictor.
-
-    INPUTS:
-    - diam (mm) : throat diameter of the restrictor
-    - T_0 (K) : upstream air temperature
-    - p_0 (Pa) : upstream air pressure
-    - p_plenum (Pa) : plenum (downstream) air pressure
-    - Cd : Restrictor discharge coefficient. Assumed perfect restrictor, defaults to 1. Acceptable range [0,1]. Determine experimentally.
-
-    OUTPUT: 
-    - res_massflow (kg/s) : Restrictor air mass flow rate
-    """
-    GAMMA = GAMMA_AIR
-    R = R_AIR
-
-    if Cd > 1:
-        raise ValueError("Cd must be less than or equal to 1.")
-    
-    diam_m = diam/1000  # Convert from mm to m
-    area = np.pi * 0.25 * (diam_m ** 2)    # XEC Area, mm^2
-
-    pratio = p_plenum / p_0     # Outlet/Inlet air pressure ratio
-    gratio = (2/(GAMMA + 1))**(GAMMA/(GAMMA - 1))   # Heat ratio
-
-    choking = pratio <= gratio  # Choking if ture
-
-    if choking: # Calculate choked mass flow rate
-        print("Choked flow. Calculating . . .\n")
-
-        # Break Up the Equation to Make it Easier
-        GR = (GAMMA + 1)/2
-        GC = GR ** (-GR/(GAMMA - 1))
-        GROOT = np.sqrt(GAMMA/R)
-        forcepart = Cd * area * p_0
-
-        # Calculate Mass Flow Rate
-        res_massflow = (forcepart / np.sqrt(T_0)) * GROOT * GC
-
-    else:
-        print("Subsonic flow. Calculating . . .\n")
-
-        # Break up the equation to make it easier
-        forcepart = Cd * area * p_0
-        energypart = 2 * GAMMA / (R * T_0 * (GAMMA - 1))
-        pressurepart = (pratio ** (2/GAMMA)) - (pratio ** ((GAMMA + 1)/GAMMA))
-
-        # Calculate Mass Flow Rate
-        res_massflow = forcepart * np.sqrt(energypart * pressurepart)
-
-    return res_massflow
 
 # -----------------------------------------
 #           ENGINE FUNCTIONS
@@ -109,23 +70,13 @@ def instant_cylinder_volume_change_rate(crankangle, bore, stroke, lconrod, rpm):
 
     # Convert inputs to SI units
     bore_m = bore / 1000
-    stroke_m = stroke / 1000
-    lconrod_m = lconrod / 1000
-    omega = 2 * np.pi * rpm / 60
+
 
     # Calculate bore area
     A = np.pi * (bore_m / 2) ** 2
 
-    # Calculate the piston velocity as a function of crank angle using slider-crank kinematics
-    r = stroke_m / 2  # Crank radius, m
-    l = lconrod_m     # Connecting rod length, m
-    theta = np.asarray(crankangle, dtype=float)  # crank angle, radians
-
-    # Calculate Piston Velocity using slider-crank kinematics
-    piston_speed = omega * r * (
-        np.sin(theta) 
-        + (r*np.sin(theta)*np.cos(theta))
-        /np.sqrt(l**2 - (r*np.sin(theta))**2))
+    # Calculate Piston Velocity (m/s) using slider-crank kinematics
+    piston_speed = piston_velocity_m_s(stroke, lconrod, rpm, crankangle)
 
     # Calculate instantaneous volume change rate (dV/dt)
     dVdt = A * piston_speed
