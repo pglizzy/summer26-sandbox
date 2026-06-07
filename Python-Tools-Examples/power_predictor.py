@@ -11,17 +11,10 @@ path_fuel_csv = "N/A"
 # GLOBAL CONSTANTS:
 R_AIR = 287         # (J/kg*K) Gas Constant
 GAMMA_AIR = 1.4     # Ratio of Constant Heats for Air
-T_0 = 300           # (K) Amb. Air Temperature
-T_PLENUM = 310      # (K) Plenum air temperature
-P_0 = 101325        # (Pa) Amb. Air Pressure (Atm. Pressure, absolute)
-k = 10                  # Plenum volume to engine displacement ratio. 
 BRAKE_EFFICIENCY = 0.3  # Estimated engine brake efficiency.
 LAMBDA = 0.9        # Lambda value for AFR
 
 # GLOBAL FUNCTIONS
-PI = np.pi
-COS = np.cos
-SIN = np.sin
 
 # RESIDUAL THRESHOLDS:
 RES_PRESSURE = 10E-4    # (nondimens.) pressure residual
@@ -32,8 +25,8 @@ dTHETA = 0.01       # (radians) Crank angle step size
 dN = 50             # (RPM) Engine speed step size 
 
 # CRANK ANGLE ARRAY:
-ANGLE_STEPS = int(4 * PI / dTHETA) + 1
-CRANK_ANGLE_ARRAY_RADIANS = np.linspace(0, 4*PI, ANGLE_STEPS) 
+ANGLE_STEPS = int(4 * np.pi / dTHETA) + 1
+CRANK_ANGLE_ARRAY_RADIANS = np.linspace(0, 4*np.pi, ANGLE_STEPS) 
 
 # -----------------------------------------
 #           RESTRICTOR FUNCTIONS
@@ -60,7 +53,7 @@ def restrictor_mass_flowrate(diam, T_0, p_0, p_plenum, Cd=1):
         raise ValueError("Cd must be less than or equal to 1.")
     
     diam_m = diam/1000  # Convert from mm to m
-    area = PI * 0.25 * (diam_m ** 2)    # XEC Area, mm^2
+    area = np.pi * 0.25 * (diam_m ** 2)    # XEC Area, mm^2
 
     pratio = p_plenum / p_0     # Outlet/Inlet air pressure ratio
     gratio = (2/(GAMMA + 1))**(GAMMA/(GAMMA - 1))   # Heat ratio
@@ -156,24 +149,11 @@ def engine_displacement(bore, stroke, cylinders):
     bore_m = bore / 1000
     stroke_m = stroke / 1000
 
-    area = PI * (bore_m / 2) ** 2
+    area = np.pi * (bore_m / 2) ** 2
     swept_volume_per_cylinder = area * stroke_m
     total_displacement = swept_volume_per_cylinder * cylinders
 
     return total_displacement
-
-def cylinder_head_volume(displacement, compressionratio):
-    """
-    Calculates the cylinder head (clearance) volume based on engine displacement and compression ratio.
-
-    INPUTS:
-    - displacement (m^3) : engine displacement volume
-    - compressionratio : engine compression ratio (dimensionless)
-
-    OUTPUT:
-    - head_volume (m^3) : cylinder head (clearance) volume
-    """
-    return displacement / (compressionratio - 1)
 
 def ideal_air_mass_flowrate(displacement, rpm, T_ambient=300, P_ambient=101325):
     """
@@ -324,20 +304,50 @@ def engine_volume_demand_rate(intake_event_arr, crankangle_arr, ve_arr, bore, st
     return total_vol_demand_rate
 
 # -----------------------------------------
-#           ITERATIVE SOLVERS
+#           ITERATIVE SOLVER
 # -----------------------------------------
 
-def iteratively_solve_pressure():
+def iteratively_solve_power_output(engine : str, fuel : str):
     """
-    Iteratively solves for the
+    Iteratively solves for the restricted power output of the engine. Will update with further details as the function is built.
     """
+
+    # Ambient Air Constants:
+    T_0 = 300               # (K) Ambient Air Temperature
+    P_0 = 101325               # (Pa) Ambient air pressure
+    R = R_AIR               # (J/kg*K) Gas Constant
+    rho_0 = P_0 / (R * T_0) # (kg/m^3) Ambient Air Density
+
+    # Plenum Constants:
+    T_P = 310          # (K) Elevated Air Temp of the Plenum
+    k = 10                  # Plenum Volume / Engine Displacement
+
+    # Restrictor Constants:
+    if fuel == "E85":
+        diam_r = 19 / 1000   # (m) Restrictor Diameter
+        
+    else:
+        diam_r = 20 / 1000  # (m) Restrictor Diameter
+
+    A_r = np.pi * 0.25 * (diam_r**2)
+    
+
+
+    
+
+
+
+
+
 
 # \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
 # ------------- MAIN FUNCTION -------------
 # /////////////////////////////////////////
 
 def main():
-    pass
+    engine = "Daytona675"
+    fuel = "E85"
+    iteratively_solve_power_output(engine=engine, fuel=fuel)
 
 if __name__ == "__main__":
     main()
