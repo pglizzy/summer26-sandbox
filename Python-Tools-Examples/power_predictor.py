@@ -11,20 +11,29 @@ path_fuel_csv = "N/A"
 # GLOBAL CONSTANTS:
 R_AIR = 287         # (J/kg*K) Gas Constant
 GAMMA_AIR = 1.4     # Ratio of Constant Heats for Air
-T_0 = 300           # (K) Ambient Air Temperature
-P_0 = 101325        # (Pa) Ambient Air Pressure (Atmospheric Pressure, absolute)
-k = 10              # Plenum volume to engine displacement ratio. 
+T_0 = 300           # (K) Amb. Air Temperature
+T_PLENUM = 310      # (K) Plenum air temperature
+P_0 = 101325        # (Pa) Amb. Air Pressure (Atm. Pressure, absolute)
+k = 10                  # Plenum volume to engine displacement ratio. 
 BRAKE_EFFICIENCY = 0.3  # Estimated engine brake efficiency.
 LAMBDA = 0.9        # Lambda value for AFR
-
 
 # GLOBAL FUNCTIONS
 PI = np.pi
 COS = np.cos
 SIN = np.sin
 
-# GLOBAL ARRAYS:
-CRANK_ANGLE_ARRAY_RADIANS = np.linspace(0, 4*PI, 1001) # Crank angle array from 0 to 720 degrees (4*pi radians) with 1001 points
+# RESIDUAL THRESHOLDS:
+RES_PRESSURE = 10E-4    # (nondimens.) pressure residual
+RES_MASSFLOW = 10E-4   # (nondimens.) mass flow rate residual
+
+# STEP SIZES:
+dTHETA = 0.01       # (radians) Crank angle step size
+dN = 50             # (RPM) Engine speed step size 
+
+# CRANK ANGLE ARRAY:
+ANGLE_STEPS = int(4 * PI / dTHETA) + 1
+CRANK_ANGLE_ARRAY_RADIANS = np.linspace(0, 4*PI, ANGLE_STEPS) 
 
 # -----------------------------------------
 #           RESTRICTOR FUNCTIONS
@@ -87,18 +96,6 @@ def restrictor_mass_flowrate(diam, T_0, p_0, p_plenum, Cd=1):
 #           ENGINE FUNCTIONS
 # -----------------------------------------
 
-def convert_rpm_to_angularspeed_4stroke(rpm):
-    """
-    Converts engine speed in RPM to angular speed in radians per second for a 4-stroke engine.
-
-    INPUT:
-    - rpm : engine speed in revolutions per minute
-
-    OUTPUT:
-    - omega (rad/s) : angular speed of the crankshaft
-    """
-    return (rpm * 2 * PI) / 60 / 2   # Divide by 2 for 4-stroke engine
-
 def instant_cylinder_volume_change_rate(crankangle, bore, stroke, lconrod, rpm):
     """
     Calculates instantantaneous cylinder volume change rate (dV/dt) at a given crank angle and engine speed.
@@ -121,24 +118,28 @@ def instant_cylinder_volume_change_rate(crankangle, bore, stroke, lconrod, rpm):
     bore_m = bore / 1000
     stroke_m = stroke / 1000
     lconrod_m = lconrod / 1000
-    omega = convert_rpm_to_angularspeed_4stroke(rpm)
+    omega = 2 * np.pi * rpm / 60
 
     # Calculate bore area
-    A = PI * (bore_m / 2) ** 2
+    A = np.pi * (bore_m / 2) ** 2
 
     # Calculate the piston velocity as a function of crank angle using slider-crank kinematics
     r = stroke_m / 2  # Crank radius, m
     l = lconrod_m     # Connecting rod length, m
-    theta = crankangle  # crank angle, radians
+    theta = np.asarray(crankangle, dtype=float)  # crank angle, radians
 
     # Calculate Piston Velocity using slider-crank kinematics
-    velocity = - omega * r * (SIN(theta) + r*SIN(theta)*COS(theta)/np.sqrt(l**2 - (r*SIN(theta))**2))
+    piston_speed = omega * r * (
+        np.sin(theta) 
+        + (r*np.sin(theta)*np.cos(theta))
+        /np.sqrt(l**2 - (r*np.sin(theta))**2))
 
     # Calculate instantaneous volume change rate (dV/dt)
-    dVdt = A * velocity
+    dVdt = A * piston_speed
+
+    dVdt = np.maximum(dVdt, 0)
 
     return dVdt
-
 
 def engine_displacement(bore, stroke, cylinders):
     """
@@ -258,29 +259,78 @@ def est_OEM_volumetric_efficiency_arr(power_arr, displacement, T_ambient=300, P_
 
     return volumetric_efficiency_arr
 
-
-
-
-
-def update_plenum_pressure(restrictordiam, Cd, crankangle, bore, stroke, lconrod, rpm, p_0=101325, T_0=300):
+def engine_volume_demand_rate(intake_event_arr, crankangle_arr, ve_arr, bore, stroke, lconrod, rpm):
     """
-    Updates the plenum pressure through the intake stroke relative to crankshaft angle of the piston.
+    Calculates the dynamic engine volume demand as a function of the engine's intake event order, crank angle array, volumetric efficiency curve, and engine geometry.
+
+    The intake event array is dictated by the engine cylinder count and firing order. See intake_event_arr() for more details. Array length is equal to the number of cylinders, and the element value indicates the angle at which the intake event starts for that cylinder in degrees. 
+
+    For engines with overlapping intake events, volume demand will be higher than the instant cylinder volume demand rate at that crank angle.
 
     INPUTS:
-    - restrictordiam (mm) : throat diameter of the restrictor
-    - Cd : Restrictor discharge coefficient. Assumed perfect restrictor, defaults to 1. Acceptable range [0,1]. Determine experimentally.
-    - crankangle (degrees) : crankshaft angle of the piston
+    - Intake_event_arr (degrees) : array of crank angles at which each cylinder intake event begins.
+    - crankangle_arr (radians) : array of crank angles over which to calculate the volume demand
+    - ve_arr (dimensionless) : VE of engine at each crank angle
     - bore (mm) : cylinder bore diameter
     - stroke (mm) : cylinder stroke length
     - lconrod (mm) : length of the connecting rod
     - rpm : engine speed in revolutions per minute
-    - p_0 (Pa) : upstream air pressure, defaults to atmospheric pressure
-    - T_0 (K) : upstream air temperature, defaults to 300 K
 
     OUTPUT:
-    - p_plenum (Pa) : plenum pressure at the given crank angle
+    - volume_demand_arr (m^3) : array of dynamic engine air volume demand rate throughout the engine cycle.
+
     """
-    pass
+
+    intake_duration = np.pi    # Length of intake event
+
+    angles = np.asarray(crankangle_arr) # (radian) angle array
+    max_angle = 4*np.pi # (radian) max angle of engine cycle
+    ve_arr = np.asarray(ve_arr) # array of VE values at each crank angle
+
+    if ve_arr.shape != angles.shape:
+        raise ValueError("VE array and crank angle array must have the same shape.")
+
+    # Ensure the intake event array occurs within the engine cycle
+    intake_start_angles = np.radians(intake_event_arr) % max_angle
+
+    # Initialize total volume demand array
+    total_vol_demand_rate = np.zeros_like(angles, dtype=float)
+
+    # Iterate through intake events and calculate volume demand contribution from each event at each crank angle
+    for intake_start in intake_start_angles:
+        
+        # Show where the crank is relative to the start of intake event, ensure that the angle is positive and wraps around the engine cycle
+        rel_angles = (angles - intake_start) % max_angle
+
+        # If relative angle is less than intake duration, we know the intake is pulling air
+        pulling = rel_angles < intake_duration
+
+        # Create the cylinder's local volume demand rate array
+        cyl_demand_rate = np.zeros_like(angles, dtype=float)
+
+        cyl_demand_rate[pulling] = (
+            ve_arr[pulling] 
+            * instant_cylinder_volume_change_rate(
+                rel_angles[pulling], 
+                bore, 
+                stroke, 
+                lconrod, 
+                rpm
+            )
+        )
+
+        total_vol_demand_rate += cyl_demand_rate
+
+    return total_vol_demand_rate
+
+# -----------------------------------------
+#           ITERATIVE SOLVERS
+# -----------------------------------------
+
+def iteratively_solve_pressure():
+    """
+    Iteratively solves for the
+    """
 
 # \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
 # ------------- MAIN FUNCTION -------------
