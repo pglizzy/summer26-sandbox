@@ -1,0 +1,14 @@
+[project]
+name = "power-predictor"
+version = "0.1.0"
+description = "Power prediction tools for restricted motorcycle engines"
+requires-python = ">=3.11"
+
+dependencies = [
+    "numpy",
+    "pandas",
+    "matplotlib",
+]
+
+[tool.setuptools]
+packages = ["source"]

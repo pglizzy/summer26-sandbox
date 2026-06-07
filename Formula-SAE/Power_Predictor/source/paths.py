@@ -10,6 +10,9 @@ def find_project_root(start: Path | None = None) -> Path:
     if start is None:
         start = Path(__file__).resolve()
 
+    if start.is_file():
+        start = start.parent
+
     for parent in [start, *start.parents]:
         if (parent / "pyproject.toml").exists() or (parent / ".git").exists():
             return parent
@@ -18,12 +21,8 @@ def find_project_root(start: Path | None = None) -> Path:
 
 
 PROJECT_ROOT = find_project_root()
-
-# Default data directory
 DEFAULT_DATA_DIR = PROJECT_ROOT / "data"
-
-# Optional override if you move data somewhere else
-DATA_DIR = Path(os.getenv("POWER_MODEL_DATA_DIR", DEFAULT_DATA_DIR)).resolve()
+DATA_DIR = Path(os.getenv("POWER_MODEL_DATA_DIR", str(DEFAULT_DATA_DIR))).resolve()
 
 
 def find_data_file(filename: str) -> Path:

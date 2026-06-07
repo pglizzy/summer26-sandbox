@@ -12,8 +12,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(PROJECT_ROOT))
 
 # Get custom functions
-from source import restrictor_mass_flowrate
-from source import piston_velocity_m_s
+from source.restrictorflow import restrictor_mass_flowrate
+from source.engine_kinematics import piston_velocity_m_s
 
 # Get data files
 from source.data_loader import (
@@ -21,7 +21,6 @@ from source.data_loader import (
     load_fuels,
     load_engine_specs
 )
-
 engine_specs = load_engine_specs()
 fuels = load_fuels()
 dyno_curves = load_dyno_curves()
@@ -32,19 +31,6 @@ GAMMA_AIR = 1.4     # Ratio of Constant Heats for Air
 BRAKE_EFFICIENCY = 0.3  # Estimated engine brake efficiency.
 LAMBDA = 0.9        # Lambda value for AFR
 
-# GLOBAL FUNCTIONS
-
-# RESIDUAL THRESHOLDS:
-RES_PRESSURE = 10E-4    # (nondimens.) pressure residual
-RES_MASSFLOW = 10E-4   # (nondimens.) mass flow rate residual
-
-# STEP SIZES:
-dTHETA = 0.01       # (radians) Crank angle step size
-dN = 50             # (RPM) Engine speed step size 
-
-# CRANK ANGLE ARRAY:
-ANGLE_STEPS = int(4 * np.pi / dTHETA) + 1
-CRANK_ANGLE_ARRAY_RADIANS = np.linspace(0, 4*np.pi, ANGLE_STEPS) 
 
 # -----------------------------------------
 #           ENGINE FUNCTIONS
@@ -190,62 +176,62 @@ def est_OEM_volumetric_efficiency_arr(power_arr, displacement, T_ambient=300, P_
 
     return volumetric_efficiency_arr
 
-def engine_volume_demand_rate(intake_event_arr, crankangle_arr, ve_arr, bore, stroke, lconrod, rpm):
+def engine_volume_demand_rate(
+    intake_event_arr,
+    crankangle_arr,
+    ve,
+    bore,
+    stroke,
+    lconrod,
+    rpm
+):
     """
-    Calculates the dynamic engine volume demand as a function of the engine's intake event order, crank angle array, volumetric efficiency curve, and engine geometry.
+    Calculates dynamic engine volume demand rate as a function of crank angle.
 
-    The intake event array is dictated by the engine cylinder count and firing order. See intake_event_arr() for more details. Array length is equal to the number of cylinders, and the element value indicates the angle at which the intake event starts for that cylinder in degrees. 
-
-    For engines with overlapping intake events, volume demand will be higher than the instant cylinder volume demand rate at that crank angle.
+    VE and RPM are scalar values for the current engine speed. VE is assumed
+    constant throughout the engine cycle.
 
     INPUTS:
-    - Intake_event_arr (degrees) : array of crank angles at which each cylinder intake event begins.
-    - crankangle_arr (radians) : array of crank angles over which to calculate the volume demand
-    - ve_arr (dimensionless) : VE of engine at each crank angle
+    - intake_event_arr (deg) : crank angles where each cylinder intake event begins
+    - crankangle_arr (rad) : crank angle array over one full engine cycle
+    - ve (dimensionless) : volumetric efficiency at the current RPM
     - bore (mm) : cylinder bore diameter
     - stroke (mm) : cylinder stroke length
-    - lconrod (mm) : length of the connecting rod
+    - lconrod (mm) : connecting rod length
     - rpm : engine speed in revolutions per minute
 
     OUTPUT:
-    - volume_demand_arr (m^3) : array of dynamic engine air volume demand rate throughout the engine cycle.
-
+    - total_vol_demand_rate (m^3/s) : engine volume demand rate vs crank angle
     """
 
-    intake_duration = np.pi    # Length of intake event
+    intake_duration = np.pi      # 180 deg intake event
+    max_angle = 4 * np.pi        # 720 deg four-stroke cycle
 
-    angles = np.asarray(crankangle_arr) # (radian) angle array
-    max_angle = 4*np.pi # (radian) max angle of engine cycle
-    ve_arr = np.asarray(ve_arr) # array of VE values at each crank angle
-
-    if ve_arr.shape != angles.shape:
-        raise ValueError("VE array and crank angle array must have the same shape.")
-
-    # Ensure the intake event array occurs within the engine cycle
+    angles = np.asarray(crankangle_arr, dtype=float)
     intake_start_angles = np.radians(intake_event_arr) % max_angle
 
-    # Initialize total volume demand array
+    ve = float(ve)
+    rpm = float(rpm)
+
     total_vol_demand_rate = np.zeros_like(angles, dtype=float)
 
-    # Iterate through intake events and calculate volume demand contribution from each event at each crank angle
     for intake_start in intake_start_angles:
-        
-        # Show where the crank is relative to the start of intake event, ensure that the angle is positive and wraps around the engine cycle
+
+        # Local crank angle relative to the start of this cylinder's intake event
         rel_angles = (angles - intake_start) % max_angle
 
-        # If relative angle is less than intake duration, we know the intake is pulling air
+        # Cylinder is actively demanding air during intake stroke
         pulling = rel_angles < intake_duration
 
-        # Create the cylinder's local volume demand rate array
         cyl_demand_rate = np.zeros_like(angles, dtype=float)
 
         cyl_demand_rate[pulling] = (
-            ve_arr[pulling] 
+            ve
             * instant_cylinder_volume_change_rate(
-                rel_angles[pulling], 
-                bore, 
-                stroke, 
-                lconrod, 
+                rel_angles[pulling],
+                bore,
+                stroke,
+                lconrod,
                 rpm
             )
         )
@@ -254,40 +240,425 @@ def engine_volume_demand_rate(intake_event_arr, crankangle_arr, ve_arr, bore, st
 
     return total_vol_demand_rate
 
+def engine_volume_demand_rate_at_angle(
+    intake_event_arr,
+    crankangle,
+    ve,
+    bore,
+    stroke,
+    lconrod,
+    rpm
+):
+    """
+    Calculates instantaneous engine volume demand rate at one crank angle.
+
+    INPUTS:
+    - intake_event_arr (deg) : crank angles where each cylinder intake event begins
+    - crankangle (rad) : single crank angle to evaluate
+    - ve (dimensionless) : volumetric efficiency at the current RPM
+    - bore (mm) : cylinder bore diameter
+    - stroke (mm) : cylinder stroke length
+    - lconrod (mm) : connecting rod length
+    - rpm : engine speed in revolutions per minute
+
+    OUTPUT:
+    - total_vol_demand_rate (m^3/s) : total engine volume demand rate at this crank angle
+    """
+
+    intake_duration = np.pi      # 180 deg intake event
+    max_angle = 4 * np.pi        # 720 deg four-stroke cycle
+
+    crankangle = float(crankangle) % max_angle
+    ve = float(ve)
+    rpm = float(rpm)
+
+    intake_start_angles = np.radians(intake_event_arr) % max_angle
+
+    total_vol_demand_rate = 0.0
+
+    for intake_start in intake_start_angles:
+
+        # Crank angle relative to the start of this cylinder's intake event
+        rel_angle = (crankangle - intake_start) % max_angle
+
+        # Cylinder only demands air during its intake stroke
+        if rel_angle < intake_duration:
+
+            cyl_demand_rate = (
+                ve
+                * instant_cylinder_volume_change_rate(
+                    rel_angle,
+                    bore,
+                    stroke,
+                    lconrod,
+                    rpm
+                )
+            )
+
+            total_vol_demand_rate += cyl_demand_rate
+
+    return total_vol_demand_rate
+
+def parse_crank_phasing(phasing_string):
+    """
+    Convert crank phasing string from CSV into a NumPy array.
+
+    Example:
+        "0_180_360_540" -> array([  0., 180., 360., 540.])
+    """
+
+    if phasing_string is None:
+        raise ValueError("Crank phasing string is None")
+
+    phasing_string = str(phasing_string).strip()
+
+    if phasing_string == "":
+        raise ValueError("Crank phasing string is empty")
+
+    return np.array(
+        [float(value) for value in phasing_string.split("_")],
+        dtype=float
+    )
+
+def get_engine_data(engine_name : str, fuel_name : str):
+    # ---------------------------
+    # Get Engine Dyno Data Arrays:
+    # ---------------------------
+
+    engine_dyno = dyno_curves[dyno_curves["Engine"] == engine_name].copy()
+
+    if engine_dyno.empty:
+        raise ValueError(f"No Dyno Curve found for engine: {engine_name}")
+    
+    engine_dyno = engine_dyno.sort_values("RPM")
+
+    rpm = engine_dyno["RPM"].to_numpy(dtype=float)
+    torque_nm = engine_dyno["Torque_Nm"].to_numpy(dtype=float)
+    power_kw = engine_dyno["Power_kW"].to_numpy(dtype=float)
+
+    # ---------------------------
+    # Get Engine Spec Values
+    # ---------------------------
+
+    rotating_specs = engine_specs[engine_specs["EngineID"] == engine_name]
+
+    if rotating_specs.empty:
+        raise ValueError(f"No specifications found for engine: {engine_name}")
+    
+    engine_spec = rotating_specs.iloc[0] # Ensure you're only grabbing a value, not an array
+
+    cyl = int(engine_spec["Cylinders"])
+    bore_mm = float(engine_spec["Bore_mm"])
+    stroke_mm = float(engine_spec["Stroke_mm"])
+    lconrod_mm = float(engine_spec["Conrod_Length_mm"])
+    CR = float(engine_spec["CompRatio"])
+    crankphase_str = engine_spec["Crank_Phasing_deg"]
+    crankphase_arr = parse_crank_phasing(crankphase_str)
+
+    # ---------------------------
+    # Get Engine Fuel Data
+    # ---------------------------
+
+    matching_fuel = fuels[fuels["Fuel"] == fuel_name]
+
+    if matching_fuel.empty:
+        raise ValueError(f"No data found for fuel: {fuel_name}")
+    
+    fuel = matching_fuel.iloc[0]    # Ensure only grabbing a value, not array
+
+    fuel_density = float(fuel["Density_kg/L"])
+    LHV = float(fuel["LHV_MJ/kg"])
+    AFR = float(fuel["AFR"])
+
+    # ---------------------------
+    # Return All Engine Data
+    # ---------------------------
+
+    return {
+        "engine_name" : engine_name,
+        "fuel_name" : fuel_name,
+
+        "rpm" : rpm,
+        "torque_nm" : torque_nm,
+        "power_kw" : power_kw,
+
+        "cyl" : cyl,
+        "bore_mm" : bore_mm,
+        "stroke_mm" : stroke_mm,
+        "lconrod_mm" : lconrod_mm,
+        "CR" : CR,
+        "crankphases_deg" : crankphase_arr,
+        
+        "fuel_density" : fuel_density,
+        "LHV" : LHV,
+        "AFR" : AFR
+    }
+
+def get_OEM_Fuel_data():
+    fuel_name = "93"
+    matching_fuel = fuels[fuels["Fuel"] == fuel_name]
+
+    if matching_fuel.empty:
+        raise ValueError(f"No data found for fuel: {fuel_name}")
+    
+    fuel = matching_fuel.iloc[0]    # Ensure only grabbing a value, not array
+
+    fuel_density = float(fuel["Density_kg/L"])
+    LHV = float(fuel["LHV_MJ/kg"])
+    AFR = float(fuel["AFR"])
+
+    return{
+        "fuel_density" : fuel_density,
+        "LHV" : LHV,
+        "AFR" : AFR
+    }
+
 # -----------------------------------------
 #           ITERATIVE SOLVER
 # -----------------------------------------
 
-def iteratively_solve_power_output(engine : str, fuel : str):
+def iteratively_solve_power_output(engine_name : str, fuel_name : str):
     """
     Iteratively solves for the restricted power output of the engine. Will update with further details as the function is built.
     """
 
-    # Ambient Air Constants:
+    # ------------------------------------
+    #       FUNCTION BASE PARAMETERS
+    # --------- modify if needed ---------
+    # ------------------------------------
+
+    # AMBIENT AIR CONSTANTS:
     T_0 = 300               # (K) Ambient Air Temperature
     P_0 = 101325               # (Pa) Ambient air pressure
     R = R_AIR               # (J/kg*K) Gas Constant
     rho_0 = P_0 / (R * T_0) # (kg/m^3) Ambient Air Density
 
-    # Plenum Constants:
-    T_P = 310          # (K) Elevated Air Temp of the Plenum
+    # PLENUM CONSTANTS:
+    T_PLENUM = 310          # (K) Elevated Air Temp of the Plenum
     k = 10                  # Plenum Volume / Engine Displacement
 
-    # Restrictor Constants:
-    if fuel == "E85":
+    # ITERATION CONTROL PARAMETERS:
+    MAX_ITERS = 1000        # Maximum iterations
+    RES_PRESSURE = 10E-4    # (nondimens.) pressure residual
+    THETA_STEP = 0.001      # (rad) Crank Angle Step Size
+
+    # CRANK ANGLE ARRAY:
+    N_ANGLE_STEPS = int(4 * np.pi / THETA_STEP) + 1
+    CRANK_ANGLE_ARRAY_RADIANS = np.linspace(0, 4*np.pi, N_ANGLE_STEPS) 
+
+    # ------------------------------------ 
+    #           FUNCTION OPTIONS:
+    # --------- modify if needed ---------
+    # ------------------------------------ 
+    FACTOR_FUEL_RATIO = False   # Option to consider fuel change
+    fuel_ratio=1                # Value otherwise
+
+    FACTOR_PUMPING_LOSSES = True   # Option to consider pumping losses
+    pumping_loss_power = 0          # Value otherwise
+
+    UNDERRELAX = False      # Option to underrelax solver for stability
+    alpha = 0.3             # Under relaxation factor
+
+    # ------------------------------------
+    #        GET ENGINE & FUEL DATA
+    # ------------------------------------   
+
+    # Get the engine and fuel data from the CSV files. 
+    data = get_engine_data(engine_name=engine_name, fuel_name=fuel_name)
+
+    # OEM Dyno Curve Data for the engine
+    rpm_arr = data["rpm"]
+    oem_power_kw_arr = data["power_kw"]
+
+    # Engine Specs
+    bore_mm = data["bore_mm"]
+    stroke_mm = data["stroke_mm"]
+    lconrod_mm = data["lconrod_mm"] # Connecting rod length
+    CYL = data["cyl"]   # number of cylinders
+
+    # Get the phases for the cylinders
+    crankphases_deg = data["crangephases_deg"]
+
+    # SELECTED FUEL PROPERTIES:
+    LHV = data["LHV"]   # Lower Heating Value (MJ/kg)
+    AFR = data["AFR"]   # Air Fuel Ratio
+
+    # RESTRICTOR SIZE:
+    if fuel_name == "E85":
         diam_r = 19 / 1000   # (m) Restrictor Diameter
         
     else:
         diam_r = 20 / 1000  # (m) Restrictor Diameter
 
-    A_r = np.pi * 0.25 * (diam_r**2)
-    
+    # Calculate engine displacement and plenum volume
+    disp_m3 = engine_displacement(bore_mm, stroke_mm, CYL)
+    V_PLENUM = k*disp_m3 # (m^3) Plenum displacement
 
+    # Calculate the RPM-based volumetric efficiency
+    VE_arr = est_OEM_volumetric_efficiency_arr(
+        oem_power_kw_arr, 
+        disp_m3, 
+        T_0, 
+        P_0, 
+        LHV=LHV, 
+        lambda_val=LAMBDA, 
+        brake_efficiency=BRAKE_EFFICIENCY, 
+        AFR_stoich=AFR)
 
-    
+    # Create the restricted power array
+    power_restricted = np.zeros_like(oem_power_kw_arr)
 
+    for i, speed in enumerate(rpm_arr):
+        # Initialize the plenum to be ambient pressure
+        P_PLENUM = P_0
+        P_PLENUM_ARRAY = np.zeros_like(CRANK_ANGLE_ARRAY_RADIANS)
 
+        # Get the OEM values for VE, Power, Mass Flow
+        VE = VE_arr[i]
+        OEM_power = oem_power_kw_arr[i]
+        oem_mrate = est_OEM_air_mass_flowrate(
+            OEM_power, 
+            lambda_val=LAMBDA, 
+            AFR_stoich=AFR, 
+            lower_heating_value=LHV, 
+            brake_efficiency=BRAKE_EFFICIENCY)
 
+        # Calculate angular speed in rad/s
+        omega = speed * 2 * np.pi / 60
+
+        iter_count = 0  # Initialize the iteration counter
+        converged = False
+
+        # Begin the pressure solver
+        while iter_count < MAX_ITERS:
+
+            P_START = P_PLENUM
+            P_PLENUM_ARRAY[0] = P_START
+
+            for i in range(len(CRANK_ANGLE_ARRAY_RADIANS) - 1):
+
+                theta = CRANK_ANGLE_ARRAY_RADIANS[i]
+                P_current = P_PLENUM_ARRAY[i]
+
+                # Calculate plenum air density
+                rho_plenum = P_current / (R * T_PLENUM)
+
+                # Calculate engine volume demand
+                v_demand_rate = engine_volume_demand_rate_at_angle(
+                    crankphases_deg, 
+                    theta, 
+                    VE, 
+                    bore_mm, 
+                    stroke_mm, 
+                    lconrod_mm, 
+                    speed)
+
+                # Calculate Air Mass Flow Demand:
+                m_demand_rate = rho_plenum * v_demand_rate
+
+                # Calculate the restrictor mass flow rate
+                m_restrictor = restrictor_mass_flowrate(
+                    diam_r, 
+                    T_0=T_0, 
+                    p_0=P_0, 
+                    p_plenum=P_PLENUM)
+
+                # Calculate the plenum pressure change
+                dPdtheta = (
+                    R * T_PLENUM / (omega * V_PLENUM)
+                    ) * (m_restrictor - m_demand_rate)
+
+                # Update Plenum Pressure
+                P_PLENUM_ARRAY[i + 1] = P_current + (dPdtheta * THETA_STEP)
+
+            P_END = P_PLENUM_ARRAY[-1]
+            
+            res = abs(P_START - P_END) / P_START
+
+            if res < RES_PRESSURE:
+
+                print(f"Plenum Pressure Solver Converged for {speed} RPM after {iter_count} iterations.")
+                
+                converged = True
+                break
+
+            if not UNDERRELAX:
+                P_PLENUM = P_END
+
+            else:
+                P_PLENUM = P_START + alpha * (P_END - P_START)
+
+            iter_count += 1
+        
+        if not converged:
+            raise RuntimeError(
+                f"ATTENTION: Plenum Pressure Solver did not converge within "
+                f"the maximum {MAX_ITERS} iterations.\n"
+                f"Engine Speed: {speed}\n"
+                f"Residual: {res:.3e}\n"
+                f"It is recommended to adjust solution setup parameters.\n"
+                f"Solver stopped. Exiting . . ."
+            )
+
+        # Calculate the engine mass flow rate array for the converged solution
+        m_converged_rates = np.zeros_like(CRANK_ANGLE_ARRAY_RADIANS)
+        for i, theta in enumerate(CRANK_ANGLE_ARRAY_RADIANS):
+
+            rho = P_PLENUM_ARRAY[i] / (R * T_PLENUM)
+
+            v_converged_rate = engine_volume_demand_rate_at_angle(
+                crankphases_deg,
+                theta,
+                VE, 
+                bore_mm,
+                stroke_mm,
+                lconrod_mm,
+                speed
+            )
+
+            m_converged_rates[i] = rho * v_converged_rate
+            
+            i += 1
+        
+        # Integrate to get effective average mass flow rate
+        net_mass = 0  # Initialize
+        for mrate in m_converged_rates:
+            net_mass += mrate * THETA_STEP
+        
+        # Effective average air mass flow rate over a cycle
+        m_eff_avg_rate = net_mass / (4 * np.pi)
+
+        # Calc the ratio of mass airflows from restricted to OEM
+        mass_ratio = m_eff_avg_rate / oem_mrate
+
+        # Optional: Factor energy gain/loss from fuel selection
+        if FACTOR_FUEL_RATIO:
+            OEM_fuel_data = get_OEM_Fuel_data()
+            OEM_LHV = OEM_fuel_data["LHV"]
+            OEM_AFR = OEM_fuel_data["AFR"]
+            OEM_LAMBDA = 0.9
+
+            OEM_fuel_energy = OEM_LHV / (OEM_LAMBDA * OEM_AFR)
+            engine_fuel_energy = LHV / (LAMBDA * AFR)
+
+            fuel_ratio = engine_fuel_energy / OEM_fuel_energy
+
+        # Optional: Factor pumping losses due to plenum
+        if FACTOR_PUMPING_LOSSES:
+            sum_pressure = 0  # (Pa/rad) Initialize
+            for pressure in P_PLENUM_ARRAY:
+                sum_pressure += pressure * THETA_STEP
+
+            mean_plenum_pressure = sum_pressure / (4 * np.pi)
+            pmep = P_0 - mean_plenum_pressure
+
+            pumping_loss_power = pmep * disp_m3 * speed / 120
+
+            if pumping_loss_power < 0:
+                raise ValueError("Shits fucked. Higher plenum pressure than ambient, generates negative pumping losses.")
+
+        # Calculate the restricted power output of the engine at the RPM
+        power_restricted[i] = (OEM_power * mass_ratio * fuel_ratio) - pumping_loss_power
 
 
 
@@ -298,7 +669,7 @@ def iteratively_solve_power_output(engine : str, fuel : str):
 def main():
     engine = "Daytona675"
     fuel = "E85"
-    iteratively_solve_power_output(engine=engine, fuel=fuel)
+    iteratively_solve_power_output(engine_name=engine, fuel_name=fuel)
 
 if __name__ == "__main__":
     main()
