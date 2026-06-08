@@ -1258,11 +1258,12 @@ def iteratively_solve_power_output(engine_name: str, fuel_name: str):
     }
 
 
-# \\\\\\\\\\\\\\\\\\\\\n# ------------- MAIN FUNCTION -------------
+# \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+# ------------- MAIN FUNCTION -------------
 # /////////////////////////////////////////
 
 def main():
-    engine = "Daytona675"
+    engine = "CBR600RR"
     fuel = "E85"
     results = iteratively_solve_power_output(engine_name=engine, fuel_name=fuel)
     print(f"Results saved to: {results['output_dir']}")
