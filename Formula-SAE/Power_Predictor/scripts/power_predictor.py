@@ -92,7 +92,10 @@ def engine_displacement(bore, stroke, cylinders):
 
     return total_displacement
 
-def ideal_air_mass_flowrate(displacement, rpm, T_ambient=300, P_ambient=101325):
+def ideal_air_mass_flowrate(displacement, 
+                            rpm, 
+                            T_ambient=300, 
+                            P_ambient=101325):
     """
     Calculates the ideal air mass flow rate for a four-stroke engine.
 
@@ -119,7 +122,11 @@ def ideal_air_mass_flowrate(displacement, rpm, T_ambient=300, P_ambient=101325):
 
     return mdot
 
-def est_OEM_air_mass_flowrate(power, lambda_val, AFR_stoich, lower_heating_value, brake_efficiency):
+def est_OEM_air_mass_flowrate(power_w, 
+                              lambda_val, 
+                              AFR_stoich, 
+                              lower_heating_value, 
+                              brake_efficiency):
     """
     Estimate air mass flow rate at a specific power output value, using assumptions about fuel properties and engine efficiency.
     
@@ -136,13 +143,13 @@ def est_OEM_air_mass_flowrate(power, lambda_val, AFR_stoich, lower_heating_value
 
     AFR_real = lambda_val * AFR_stoich  # Calculate real air-fuel ratio based on lambda
 
-    fuel_mass_flow_rate = power / (lower_heating_value * brake_efficiency)
+    fuel_mass_flow_rate = power_w / (lower_heating_value * brake_efficiency)
 
     air_mass_flow_rate = fuel_mass_flow_rate * AFR_real
 
     return air_mass_flow_rate
 
-def est_OEM_volumetric_efficiency_arr(power_arr, displacement, T_ambient=300, P_ambient=101325, LHV=43.4e6, lambda_val=0.9, brake_efficiency=0.3, AFR_stoich=14.7):
+def est_OEM_volumetric_efficiency_arr(power_w_arr, rpm_arr, displacement, T_ambient=300, P_ambient=101325, LHV=43.4e6, lambda_val=0.9, brake_efficiency=0.3, AFR_stoich=14.7):
     """
     Calculates the volumetric efficiency curve of an OEM engine, provided the power curve and displacement.
 
@@ -154,7 +161,8 @@ def est_OEM_volumetric_efficiency_arr(power_arr, displacement, T_ambient=300, P_
     - Ambient Air Pressure = 101325 Pa (modifiable)
 
     INPUTS:
-    - power_arr (W) : array of engine power output values and RPM values
+    - power_arr (W) : array of engine power output
+    - rpm_arr (RPM) : array of engine RPMs
     - displacement (m^3) : engine displacement volume
     - T_ambient (K) : ambient air temperature, defaults to 300 K
     - P_ambient (Pa) : ambient air pressure, defaults to 101325 Pa
@@ -166,15 +174,29 @@ def est_OEM_volumetric_efficiency_arr(power_arr, displacement, T_ambient=300, P_
     OUTPUT:
     - volumetric_efficiency_arr (dimensionless) : array of volumetric efficiency values corresponding to the input power curve
     """
-    air_density = P_ambient / (R_AIR * T_ambient)  # Calculate ambient air density using ideal gas law
 
-    ideal_mass_flow_arr = ideal_air_mass_flowrate(displacement, power_arr[:, 1], air_density)  # Calculate ideal mass flow rate array based on displacement and RPM
+    if not rpm_arr.size == power_w_arr.size:
+        raise IndexError("RPM and Power Arrays must be the same length.")
 
-    est_mass_flow_arr = np.array([est_OEM_air_mass_flowrate(power, lambda_val, AFR_stoich, LHV, brake_efficiency) for power in power_arr[:, 0]])  # Estimate mass flow rate array based on power output and assumptions
+    # Calculate ideal mass flow rate array based on displacement and RPM
+    ideal_mass_flow_arr = ideal_air_mass_flowrate(
+        displacement=displacement,
+        rpm=rpm_arr, 
+        T_ambient=T_ambient,
+        P_ambient=P_ambient)  
 
-    volumetric_efficiency_arr = est_mass_flow_arr / ideal_mass_flow_arr  # Calculate volumetric efficiency array as the ratio of estimated mass flow to ideal mass flow
+    # Estimate mass flow rate array based on power output and assumptions
+    est_mass_flow_arr = est_OEM_air_mass_flowrate(
+        power_w_arr, 
+        lambda_val=lambda_val, 
+        AFR_stoich=AFR_stoich, 
+        lower_heating_value=LHV, 
+        brake_efficiency=brake_efficiency)  
+    
+    if not ideal_mass_flow_arr.size == est_mass_flow_arr.size:
+        raise IndexError("Ideal and Estimated OEM Mass Flow Rate Arrays must be the same length.")
 
-    return volumetric_efficiency_arr
+    return est_mass_flow_arr / ideal_mass_flow_arr
 
 def engine_volume_demand_rate(
     intake_event_arr,
@@ -367,7 +389,7 @@ def get_engine_data(engine_name : str, fuel_name : str):
     fuel = matching_fuel.iloc[0]    # Ensure only grabbing a value, not array
 
     fuel_density = float(fuel["Density_kg/L"])
-    LHV = float(fuel["LHV_MJ/kg"])
+    LHV = float(fuel["LHV_MJ/kg"]) * 1e6   # J/kg
     AFR = float(fuel["AFR"])
 
     # ---------------------------
@@ -431,7 +453,6 @@ def iteratively_solve_power_output(engine_name : str, fuel_name : str):
     T_0 = 300               # (K) Ambient Air Temperature
     P_0 = 101325               # (Pa) Ambient air pressure
     R = R_AIR               # (J/kg*K) Gas Constant
-    rho_0 = P_0 / (R * T_0) # (kg/m^3) Ambient Air Density
 
     # PLENUM CONSTANTS:
     T_PLENUM = 310          # (K) Elevated Air Temp of the Plenum
@@ -443,14 +464,14 @@ def iteratively_solve_power_output(engine_name : str, fuel_name : str):
     THETA_STEP = 0.001      # (rad) Crank Angle Step Size
 
     # CRANK ANGLE ARRAY:
-    N_ANGLE_STEPS = int(4 * np.pi / THETA_STEP) + 1
-    CRANK_ANGLE_ARRAY_RADIANS = np.linspace(0, 4*np.pi, N_ANGLE_STEPS) 
+    CRANK_ANGLE_ARRAY_RADIANS = np.arange(0, 4*np.pi + THETA_STEP, THETA_STEP)
+    dtheta =  CRANK_ANGLE_ARRAY_RADIANS[1] - CRANK_ANGLE_ARRAY_RADIANS[0]
 
     # ------------------------------------ 
     #           FUNCTION OPTIONS:
     # --------- modify if needed ---------
     # ------------------------------------ 
-    FACTOR_FUEL_RATIO = False   # Option to consider fuel change
+    FACTOR_FUEL_RATIO = True   # Option to consider fuel change
     fuel_ratio=1                # Value otherwise
 
     FACTOR_PUMPING_LOSSES = True   # Option to consider pumping losses
@@ -477,11 +498,17 @@ def iteratively_solve_power_output(engine_name : str, fuel_name : str):
     CYL = data["cyl"]   # number of cylinders
 
     # Get the phases for the cylinders
-    crankphases_deg = data["crangephases_deg"]
+    crankphases_deg = data["crankphases_deg"]
 
     # SELECTED FUEL PROPERTIES:
     LHV = data["LHV"]   # Lower Heating Value (MJ/kg)
     AFR = data["AFR"]   # Air Fuel Ratio
+    OEM_fuel_data = get_OEM_Fuel_data()
+    OEM_LHV = OEM_fuel_data["LHV"] * 1e6 # J/kg 
+    OEM_AFR = OEM_fuel_data["AFR"]
+    OEM_LAMBDA = 0.9
+
+    OEM_fuel_energy = OEM_LHV / (OEM_LAMBDA * OEM_AFR)
 
     # RESTRICTOR SIZE:
     if fuel_name == "E85":
@@ -495,32 +522,34 @@ def iteratively_solve_power_output(engine_name : str, fuel_name : str):
     V_PLENUM = k*disp_m3 # (m^3) Plenum displacement
 
     # Calculate the RPM-based volumetric efficiency
+    oem_power_w_arr = oem_power_kw_arr * 1000
     VE_arr = est_OEM_volumetric_efficiency_arr(
-        oem_power_kw_arr, 
+        oem_power_w_arr, 
+        rpm_arr,
         disp_m3, 
         T_0, 
         P_0, 
-        LHV=LHV, 
-        lambda_val=LAMBDA, 
+        LHV=OEM_LHV, 
+        lambda_val=OEM_LAMBDA, 
         brake_efficiency=BRAKE_EFFICIENCY, 
-        AFR_stoich=AFR)
+        AFR_stoich=OEM_AFR)
 
     # Create the restricted power array
-    power_restricted = np.zeros_like(oem_power_kw_arr)
+    power_restricted_kw = np.zeros_like(oem_power_kw_arr)
 
-    for i, speed in enumerate(rpm_arr):
+    for rpm_idx, speed in enumerate(rpm_arr):
         # Initialize the plenum to be ambient pressure
         P_PLENUM = P_0
         P_PLENUM_ARRAY = np.zeros_like(CRANK_ANGLE_ARRAY_RADIANS)
 
         # Get the OEM values for VE, Power, Mass Flow
-        VE = VE_arr[i]
-        OEM_power = oem_power_kw_arr[i]
+        VE = VE_arr[rpm_idx]
+        OEM_power_w = oem_power_kw_arr[rpm_idx] * 1000
         oem_mrate = est_OEM_air_mass_flowrate(
-            OEM_power, 
-            lambda_val=LAMBDA, 
-            AFR_stoich=AFR, 
-            lower_heating_value=LHV, 
+            OEM_power_w, 
+            lambda_val=OEM_LAMBDA, 
+            AFR_stoich=OEM_AFR, 
+            lower_heating_value=OEM_LHV, 
             brake_efficiency=BRAKE_EFFICIENCY)
 
         # Calculate angular speed in rad/s
@@ -535,10 +564,10 @@ def iteratively_solve_power_output(engine_name : str, fuel_name : str):
             P_START = P_PLENUM
             P_PLENUM_ARRAY[0] = P_START
 
-            for i in range(len(CRANK_ANGLE_ARRAY_RADIANS) - 1):
+            for theta_idx in range(len(CRANK_ANGLE_ARRAY_RADIANS) - 1):
 
-                theta = CRANK_ANGLE_ARRAY_RADIANS[i]
-                P_current = P_PLENUM_ARRAY[i]
+                theta = CRANK_ANGLE_ARRAY_RADIANS[theta_idx]
+                P_current = P_PLENUM_ARRAY[theta_idx]
 
                 # Calculate plenum air density
                 rho_plenum = P_current / (R * T_PLENUM)
@@ -561,7 +590,7 @@ def iteratively_solve_power_output(engine_name : str, fuel_name : str):
                     diam_r, 
                     T_0=T_0, 
                     p_0=P_0, 
-                    p_plenum=P_PLENUM)
+                    p_plenum=P_current)
 
                 # Calculate the plenum pressure change
                 dPdtheta = (
@@ -569,7 +598,7 @@ def iteratively_solve_power_output(engine_name : str, fuel_name : str):
                     ) * (m_restrictor - m_demand_rate)
 
                 # Update Plenum Pressure
-                P_PLENUM_ARRAY[i + 1] = P_current + (dPdtheta * THETA_STEP)
+                P_PLENUM_ARRAY[theta_idx + 1] = P_current + (dPdtheta * dtheta)
 
             P_END = P_PLENUM_ARRAY[-1]
             
@@ -602,9 +631,9 @@ def iteratively_solve_power_output(engine_name : str, fuel_name : str):
 
         # Calculate the engine mass flow rate array for the converged solution
         m_converged_rates = np.zeros_like(CRANK_ANGLE_ARRAY_RADIANS)
-        for i, theta in enumerate(CRANK_ANGLE_ARRAY_RADIANS):
+        for m_idx, theta in enumerate(CRANK_ANGLE_ARRAY_RADIANS):
 
-            rho = P_PLENUM_ARRAY[i] / (R * T_PLENUM)
+            rho = P_PLENUM_ARRAY[m_idx] / (R * T_PLENUM)
 
             v_converged_rate = engine_volume_demand_rate_at_angle(
                 crankphases_deg,
@@ -616,40 +645,30 @@ def iteratively_solve_power_output(engine_name : str, fuel_name : str):
                 speed
             )
 
-            m_converged_rates[i] = rho * v_converged_rate
-            
-            i += 1
-        
+            m_converged_rates[m_idx] = rho * v_converged_rate
+                    
         # Integrate to get effective average mass flow rate
-        net_mass = 0  # Initialize
-        for mrate in m_converged_rates:
-            net_mass += mrate * THETA_STEP
+        m_cycle = 0  # Initialize
+        dt = dtheta / omega
+        m_cycle = np.sum(m_converged_rates[:-1]) * dt
         
         # Effective average air mass flow rate over a cycle
-        m_eff_avg_rate = net_mass / (4 * np.pi)
+        m_eff_avg_rate = m_cycle * speed / 120
 
         # Calc the ratio of mass airflows from restricted to OEM
         mass_ratio = m_eff_avg_rate / oem_mrate
 
         # Optional: Factor energy gain/loss from fuel selection
         if FACTOR_FUEL_RATIO:
-            OEM_fuel_data = get_OEM_Fuel_data()
-            OEM_LHV = OEM_fuel_data["LHV"]
-            OEM_AFR = OEM_fuel_data["AFR"]
-            OEM_LAMBDA = 0.9
-
-            OEM_fuel_energy = OEM_LHV / (OEM_LAMBDA * OEM_AFR)
             engine_fuel_energy = LHV / (LAMBDA * AFR)
 
             fuel_ratio = engine_fuel_energy / OEM_fuel_energy
 
         # Optional: Factor pumping losses due to plenum
         if FACTOR_PUMPING_LOSSES:
-            sum_pressure = 0  # (Pa/rad) Initialize
-            for pressure in P_PLENUM_ARRAY:
-                sum_pressure += pressure * THETA_STEP
+            mean_plenum_pressure = 0  # (Pa/rad) Initialize
+            mean_plenum_pressure = np.sum(P_PLENUM_ARRAY[:-1]) * dtheta / (4*np.pi)
 
-            mean_plenum_pressure = sum_pressure / (4 * np.pi)
             pmep = P_0 - mean_plenum_pressure
 
             pumping_loss_power = pmep * disp_m3 * speed / 120
@@ -658,8 +677,13 @@ def iteratively_solve_power_output(engine_name : str, fuel_name : str):
                 raise ValueError("Shits fucked. Higher plenum pressure than ambient, generates negative pumping losses.")
 
         # Calculate the restricted power output of the engine at the RPM
-        power_restricted[i] = (OEM_power * mass_ratio * fuel_ratio) - pumping_loss_power
+        power_restricted_kw[rpm_idx] = ((OEM_power_w * mass_ratio * fuel_ratio) - pumping_loss_power) / 1000
 
+    return {
+        "rpm" : rpm_arr,
+        "power_oem_kw" : oem_power_kw_arr,
+        "power_restricted_kw" : power_restricted_kw
+    }
 
 
 # \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\

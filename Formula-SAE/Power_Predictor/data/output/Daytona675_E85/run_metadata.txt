@@ -1,0 +1,19 @@
+Engine: Daytona675
+Selected restricted fuel: E85
+OEM fuel assumption: 93
+Output directory: /Users/paytonlee/GradResearch/Summer26_Sandbox/Formula-SAE/Power_Predictor/data/output/Daytona675_E85
+Restrictor diameter (m): 0.019
+Plenum volume ratio k = V_plenum / displacement: 10
+Engine displacement (m^3): 0.0006747530294299017
+Plenum volume (m^3): 0.006747530294299017
+Ambient pressure (Pa): 101325
+Ambient temperature (K): 300
+Plenum temperature (K): 310
+Brake efficiency assumption: 0.3
+Restricted lambda assumption: 0.9
+OEM lambda assumption: 0.9
+Fuel ratio: 1.0030753124386573
+Theta step target (rad): 0.01
+Actual theta step (rad): 0.009997112660588045
+Pressure residual tolerance: 0.0001
+Maximum iterations: 1000

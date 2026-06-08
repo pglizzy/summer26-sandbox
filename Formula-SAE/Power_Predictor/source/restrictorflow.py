@@ -1,58 +1,67 @@
 import numpy as np
-import matplotlib.pyplot as plt
 
 R_AIR = 287         # (J/kg*K) Gas Constant
-GAMMA_AIR = 1.4     # Ratio of Constant Heats 
+GAMMA_AIR = 1.4     # Ratio of Specific Heats for Air
 
-def restrictor_mass_flowrate(diam, T_0, p_0, p_plenum, Cd=1):
+
+def restrictor_mass_flowrate(diam, T_0, p_0, p_plenum, Cd=1.0):
     """
-    Calculate the mass flowrate of the air through the restrictor.
+    Calculate the mass flow rate of air through the intake restrictor.
 
     INPUTS:
-    - diam (mm) : throat diameter of the restrictor
-    - T_0 (K) : upstream air temperature
-    - p_0 (Pa) : upstream air pressure
-    - p_plenum (Pa) : plenum (downstream) air pressure
-    - Cd : Restrictor discharge coefficient. Assumed perfect restrictor, defaults to 1. Acceptable range [0,1]. Determine experimentally.
+    - diam (m): restrictor throat diameter
+    - T_0 (K): upstream stagnation/ambient air temperature
+    - p_0 (Pa): upstream stagnation/ambient air pressure
+    - p_plenum (Pa): downstream plenum pressure
+    - Cd: restrictor discharge coefficient. Defaults to 1.0.
 
-    OUTPUT: 
-    - res_massflow (kg/s) : Restrictor air mass flow rate
+    OUTPUT:
+    - res_massflow (kg/s): restrictor air mass flow rate
+
+    NOTES:
+    - The function uses the standard quasi-steady compressible orifice/nozzle
+      equations.
+    - Flow is choked when p_plenum / p_0 is below the critical pressure ratio.
+    - This function intentionally does not print during normal operation because
+      it is called thousands of times inside the plenum solver.
     """
-    GAMMA = GAMMA_AIR
+    gamma = GAMMA_AIR
     R = R_AIR
 
-    if Cd > 1:
-        raise ValueError("Cd must be less than or equal to 1.")
-    
-    diam_m = diam/1000  # Convert from mm to m
-    area = np.pi * 0.25 * (diam_m ** 2)    # XEC Area, mm^2
+    if not 0 < Cd <= 1:
+        raise ValueError("Cd must be in the range (0, 1].")
+    if diam <= 0:
+        raise ValueError("Restrictor diameter must be positive.")
+    if T_0 <= 0:
+        raise ValueError("Upstream temperature must be positive.")
+    if p_0 <= 0:
+        raise ValueError("Upstream pressure must be positive.")
+    if p_plenum <= 0:
+        raise ValueError("Plenum pressure must be positive.")
 
-    pratio = p_plenum / p_0     # Outlet/Inlet air pressure ratio
-    gratio = (2/(GAMMA + 1))**(GAMMA/(GAMMA - 1))   # Heat ratio
+    area = np.pi * 0.25 * diam**2
 
-    choking = pratio <= gratio  # Choking if ture
+    # Clamp pressure ratio to avoid non-physical reverse flow or numerical issues.
+    # For this naturally aspirated model, p_plenum should normally be <= p_0.
+    pratio = min(max(p_plenum / p_0, 1e-9), 1.0)
+    critical_pratio = (2 / (gamma + 1)) ** (gamma / (gamma - 1))
 
-    if choking: # Calculate choked mass flow rate
-        print("Choked flow. Calculating . . .\n")
-
-        # Break Up the Equation to Make it Easier
-        GR = (GAMMA + 1)/2
-        GC = GR ** (-GR/(GAMMA - 1))
-        GROOT = np.sqrt(GAMMA/R)
-        forcepart = Cd * area * p_0
-
-        # Calculate Mass Flow Rate
-        res_massflow = (forcepart / np.sqrt(T_0)) * GROOT * GC
-
+    if pratio <= critical_pratio:
+        # Choked flow: Mach 1 at the throat.
+        res_massflow = (
+            Cd
+            * area
+            * p_0
+            * np.sqrt(gamma / (R * T_0))
+            * (2 / (gamma + 1)) ** ((gamma + 1) / (2 * (gamma - 1)))
+        )
     else:
-        print("Subsonic flow. Calculating . . .\n")
-
-        # Break up the equation to make it easier
-        forcepart = Cd * area * p_0
-        energypart = 2 * GAMMA / (R * T_0 * (GAMMA - 1))
-        pressurepart = (pratio ** (2/GAMMA)) - (pratio ** ((GAMMA + 1)/GAMMA))
-
-        # Calculate Mass Flow Rate
-        res_massflow = forcepart * np.sqrt(energypart * pressurepart)
+        pressure_term = pratio ** (2 / gamma) - pratio ** ((gamma + 1) / gamma)
+        res_massflow = (
+            Cd
+            * area
+            * p_0
+            * np.sqrt((2 * gamma / (R * T_0 * (gamma - 1))) * pressure_term)
+        )
 
     return res_massflow
